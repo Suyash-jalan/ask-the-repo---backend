@@ -1,0 +1,12 @@
+fastapi>=0.110
+uvicorn>=0.29
+slowapi>=0.1.9
+requests>=2.31
+chromadb>=0.5
+sentence-transformers>=2.7
+langchain-groq>=0.1
+langgraph>=0.2
+langchain-core>=0.2
+tree-sitter>=0.23
+tree-sitter-python>=0.23
+python-dotenv>=1.0
