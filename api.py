@@ -202,10 +202,10 @@ def _check_github_repo(owner: str, repo: str) -> str | None:
         if resp.status_code == 200:
             data = resp.json()
             size_kb = data.get("size", 0)
-            if size_kb > 100_000:
+            if size_kb > 50_000:
                 return (
                     f"Repository is too large ({size_kb // 1000} MB). "
-                    "Maximum supported size is 100 MB."
+                    "Maximum supported size is 50 MB."
                 )
         return None
     except Exception:

@@ -7,6 +7,7 @@ LangGraph agent. Call destroy() (or let the janitor do it) to wipe
 everything.
 """
 
+import gc
 import os
 import re
 import json
@@ -64,8 +65,8 @@ def get_embed_fn():
 PY_LANGUAGE = Language(tspython.language())
 
 # Limits
-MAX_FILES = 500
-MAX_FILE_BYTES = 200_000
+MAX_FILES = 150
+MAX_FILE_BYTES = 100_000
 FALLBACK_BLOCK_LINES = 60
 
 
@@ -178,7 +179,7 @@ def split_by_markdown_headers(text: str) -> list:
     return sections
 
 
-def _get_commit_history(repo_path: str, max_commits: int = 500) -> list:
+def _get_commit_history(repo_path: str, max_commits: int = 100) -> list:
     """Retrieve commit history via subprocess (no GitPython)."""
     result = subprocess.run(
         ['git', '-C', repo_path, 'log', f'-{max_commits}',
@@ -225,10 +226,14 @@ class RepoSession:
         """Clone → index → build agent.  Runs in a background thread."""
         try:
             self._clone()
+            gc.collect()
             self.status = "indexing"
             self._index_code()
+            gc.collect()
             self._index_docs()
+            gc.collect()
             self._index_commits()
+            gc.collect()
             self._build_agent()
             self.status = "ready"
         except Exception as exc:
@@ -237,9 +242,9 @@ class RepoSession:
 
     def _clone(self):
         subprocess.run(
-            ['git', 'clone', '--filter=blob:none', '--depth', '300',
+            ['git', 'clone', '--filter=blob:none', '--depth', '50',
              '--', self.repo_url, self.repo_path],
-            capture_output=True, text=True, timeout=180, check=True,
+            capture_output=True, text=True, timeout=120, check=True,
         )
 
     # ------------------------------------------------------------ index code
@@ -258,11 +263,14 @@ class RepoSession:
                     chunks = _extract_python_chunks(fpath, self.repo_path)
                 else:
                     chunks = _extract_fallback_chunks(fpath, self.repo_path)
+                # Truncate code in memory to cap RAM usage
+                for c in chunks:
+                    c['code'] = c['code'][:2000]
                 self.all_chunks.extend(chunks)
             except Exception:
                 pass  # skip unparseable files
 
-        # Batched add (100 per batch)
+        # Batched add (50 per batch to limit peak memory)
         seen_ids: set = set()
         batch_ids, batch_docs, batch_metas = [], [], []
 
@@ -273,7 +281,8 @@ class RepoSession:
             seen_ids.add(cid)
 
             batch_ids.append(cid)
-            batch_docs.append(chunk['code'])
+            # Truncate code for embedding to save memory
+            batch_docs.append(chunk['code'][:1500])
             batch_metas.append({
                 'file': chunk['file'],
                 'name': chunk['name'],
@@ -282,9 +291,10 @@ class RepoSession:
                 'end_line': str(chunk['end_line']),
             })
 
-            if len(batch_ids) >= 100:
+            if len(batch_ids) >= 50:
                 self.collection.add(ids=batch_ids, documents=batch_docs, metadatas=batch_metas)
                 batch_ids, batch_docs, batch_metas = [], [], []
+                gc.collect()
 
         if batch_ids:
             self.collection.add(ids=batch_ids, documents=batch_docs, metadatas=batch_metas)
