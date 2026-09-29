@@ -46,14 +46,18 @@ _embed_lock = threading.Lock()
 
 
 def get_embed_fn():
-    """Lazy-load the embedding function so the server starts fast."""
+    """Lazy-load lightweight ONNX/SentenceTransformer embedding function to stay within RAM limits."""
     global _EMBED_FN
     if _EMBED_FN is None:
         with _embed_lock:
             if _EMBED_FN is None:
-                _EMBED_FN = SentenceTransformerEmbeddingFunction(
-                    model_name="all-MiniLM-L6-v2"
-                )
+                try:
+                    from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
+                    _EMBED_FN = ONNXMiniLM_L6_V2()
+                except Exception:
+                    _EMBED_FN = SentenceTransformerEmbeddingFunction(
+                        model_name="all-MiniLM-L6-v2"
+                    )
     return _EMBED_FN
 
 # Tree‑sitter Python parser (language object is cheap & thread‑safe)

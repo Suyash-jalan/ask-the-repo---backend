@@ -36,20 +36,28 @@ from session import RepoSession
 # ---------------------------------------------------------------------------
 load_dotenv()
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-if not GROQ_API_KEY:
-    raise RuntimeError(
-        "GROQ_API_KEY is not set. Add it to .env or export it as an "
-        "environment variable before starting the server."
-    )
-
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "qwen/qwen3.8-27b")
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", "1800"))
-ALLOWED_ORIGINS = [
-    o.strip()
-    for o in os.environ.get("ALLOWED_ORIGINS", "*").split(",")
+
+raw_origins = os.environ.get("ALLOWED_ORIGINS", "*")
+parsed_origins = [
+    o.strip().rstrip("/")
+    for o in raw_origins.split(",")
     if o.strip()
 ]
+allow_all = "*" in parsed_origins or not parsed_origins or parsed_origins == [""]
+
+if allow_all:
+    cors_origins = ["*"]
+    cors_credentials = False
+else:
+    cors_origins = []
+    for o in parsed_origins:
+        cors_origins.append(o)
+        cors_origins.append(o + "/")
+    cors_credentials = True
+
 MAX_SESSIONS = 10
 
 # ---------------------------------------------------------------------------
@@ -119,12 +127,12 @@ async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
     )
 
 
-# Allow CORS (supports * for public APIs or specific origins)
-allow_all = "*" in ALLOWED_ORIGINS
+# Allow CORS (supports * for public APIs or specific origins + Vercel deployment domains)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if allow_all else ALLOWED_ORIGINS,
-    allow_credentials=not allow_all,
+    allow_origins=cors_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app" if not allow_all else None,
+    allow_credentials=cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -246,6 +254,12 @@ async def health():
 @limiter.limit("5/hour")
 async def start_session(body: StartRequest, request: Request,
                         background_tasks: BackgroundTasks):
+    if not GROQ_API_KEY:
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "GROQ_API_KEY is missing in backend environment variables. Please set GROQ_API_KEY in your deployment environment."},
+        )
+
     # Validate URL
     err = _validate_github_url(body.repo_url)
     if err:
